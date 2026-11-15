@@ -54,3 +54,21 @@ do
     print(runtime.callcontext({kill={cpu=1000}}, dofile, "lua/big.lua.notest"))
     --> =killed
 end
+
+-- With only a time limit, CPU is counted but there is no CPU budget: loadfile
+-- and dofile must read the whole file (they used to read nothing once some CPU
+-- had been used, as the unused CPU wrapped around).  A soft time limit tracks
+-- CPU the same way as a hard one, without requiring "timesafe" from loadfile.
+do
+    local function spin() local n = 0 for i = 1, 1000 do n = n + i end return n end
+
+    print(runtime.callcontext({stop={millis=10000}}, function() spin() return dofile("lua/big.lua.notest") end))
+    --> =done	hello
+
+    local ctx, m = runtime.callcontext({stop={millis=10000}}, function() spin() return loadfile("lua/big.lua.notest") end)
+    print(ctx, m())
+    --> =done	hello
+
+    print(runtime.callcontext({stop={millis=10000}, kill={memory=1000000}}, function() spin() return dofile("lua/big.lua.notest") end))
+    --> =done	hello
+end
