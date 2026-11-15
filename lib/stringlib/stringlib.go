@@ -185,15 +185,16 @@ func rep(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 		}
 	}
 	// As str_rep in the reference implementation: a count <= 0 gives the empty
-	// string, and a result longer than maxRepSize is an error.  The check comes
-	// before any allocation, so a huge count is a Lua error rather than a Go
-	// panic in makeslice.
+	// string, and a result longer than maxRepSize is an error (worded as golua
+	// always has, the reference says "resulting string too large").  The check
+	// comes before any allocation, so a huge count is a Lua error rather than a
+	// Go panic in makeslice.
 	if ln <= 0 {
 		return c.PushingNext1(t.Runtime, rt.StringValue("")), nil
 	}
 	unit := int64(len(ls)) + int64(len(sep))
 	if unit > maxRepSize/ln {
-		return nil, errors.New("resulting string too large")
+		return nil, errors.New("rep causes overflow")
 	}
 	n := int(ln)
 	if n == 1 {

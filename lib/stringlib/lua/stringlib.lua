@@ -127,19 +127,19 @@ do
     --> =true	true
 
     errrep("x", 1 << 62, "y")
-    --> ~resulting string too large
+    --> ~overflow
 
     errrep("", 1 << 62, "x")
-    --> ~resulting string too large
+    --> ~overflow
 
     errrep("x", 2, 1)
     --> ~must be a string
 
     errrep("xxxxxxxxxx", 1 << 62)
-    --> ~resulting string too large
+    --> ~overflow
 
     errrep("xx", 1 << 62, ";")
-    --> ~resulting string too large
+    --> ~overflow
 end
 
 do

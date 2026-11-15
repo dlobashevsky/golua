@@ -72,9 +72,9 @@ do
 end
 -- rep: a huge count is a Lua error, not a Go panic (arnodel/golua#242)
 print(pcall(string.rep, "", 1 << 62, "x"))
---> ~^false	.*resulting string too large$
+--> ~^false	.*overflow$
 print(pcall(string.rep, "x", 1 << 62))
---> ~^false	.*resulting string too large$
+--> ~^false	.*overflow$
 print(string.rep("ab", 3, ","), string.rep("ab", 0, ","), string.rep("ab", -5))
 --> =ab,ab,ab		
 -- gsub: substitutions that produce nothing still change the string
