@@ -193,6 +193,11 @@ func rep(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 		return c.PushingNext1(t.Runtime, rt.StringValue("")), nil
 	}
 	unit := int64(len(ls)) + int64(len(sep))
+	if unit == 0 {
+		// Any number of empty strings is empty.  Return before narrowing ln to
+		// an int, which on 32-bit platforms would overflow for a huge count.
+		return c.PushingNext1(t.Runtime, rt.StringValue("")), nil
+	}
 	if unit > maxRepSize/ln {
 		return nil, errors.New("rep causes overflow")
 	}

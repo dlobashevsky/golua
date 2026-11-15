@@ -126,6 +126,11 @@ do
     print(string.rep("xx", -1) == "", string.rep("xx", 0, ",") == "")
     --> =true	true
 
+    -- Empty repetitions are empty whatever the count (on 32-bit platforms a
+    -- count above math.MaxInt32 used to overflow the conversion to int).
+    print(string.rep("", 2147483648) == "", string.rep("", 1 << 40, "") == "")
+    --> =true	true
+
     errrep("x", 1 << 62, "y")
     --> ~overflow
 
