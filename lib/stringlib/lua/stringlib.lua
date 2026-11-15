@@ -122,17 +122,24 @@ do
     errrep("xx", {})
     --> ~must be an integer
 
-    errrep("xx", -1)
-    --> ~out of range
+    -- Lua 5.4: a count <= 0 gives the empty string.
+    print(string.rep("xx", -1) == "", string.rep("xx", 0, ",") == "")
+    --> =true	true
+
+    errrep("x", 1 << 62, "y")
+    --> ~resulting string too large
+
+    errrep("", 1 << 62, "x")
+    --> ~resulting string too large
 
     errrep("x", 2, 1)
     --> ~must be a string
 
     errrep("xxxxxxxxxx", 1 << 62)
-    --> ~overflow
+    --> ~resulting string too large
 
     errrep("xx", 1 << 62, ";")
-    --> ~overflow
+    --> ~resulting string too large
 end
 
 do

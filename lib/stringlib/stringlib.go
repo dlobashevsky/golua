@@ -3,6 +3,7 @@ package stringlib
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/arnodel/golua/lib/packagelib"
@@ -176,53 +177,46 @@ func rep(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	if err != nil {
 		return nil, err
 	}
-	n := rt.ClampToInt(ln)
-	if n < 0 {
-		return nil, errors.New("#2 out of range")
-	}
-	var sep []byte
-	if c.NArgs() >= 3 {
-		lsep, err := c.StringArg(2)
+	var sep string
+	if c.NArgs() >= 3 && !c.Arg(2).IsNil() {
+		sep, err = c.StringArg(2)
 		if err != nil {
 			return nil, err
 		}
-		sep = []byte(lsep)
 	}
-	if n == 0 {
+	// As str_rep in the reference implementation: a count <= 0 gives the empty
+	// string, and a result longer than maxRepSize is an error.  The check comes
+	// before any allocation, so a huge count is a Lua error rather than a Go
+	// panic in makeslice.
+	if ln <= 0 {
 		return c.PushingNext1(t.Runtime, rt.StringValue("")), nil
 	}
+	unit := int64(len(ls)) + int64(len(sep))
+	if unit > maxRepSize/ln {
+		return nil, errors.New("resulting string too large")
+	}
+	n := int(ln)
 	if n == 1 {
 		return c.PushingNext1(t.Runtime, rt.StringValue(ls)), nil
 	}
-	if sep == nil {
-		if len(ls)*n/n != len(ls) {
-			// Overflow
-			return nil, errors.New("rep causes overflow")
-		}
-		t.RequireBytes(n * len(ls))
-		return c.PushingNext1(t.Runtime, rt.StringValue(strings.Repeat(string(ls), n))), nil
+	sz := n*len(ls) + (n-1)*len(sep)
+	t.RequireBytes(sz)
+	if sep == "" {
+		return c.PushingNext1(t.Runtime, rt.StringValue(strings.Repeat(ls, n))), nil
 	}
-	s := []byte(ls)
 	builder := strings.Builder{}
-	sz1 := n * len(s)
-	sz2 := (n - 1) * len(sep)
-	sz := sz1 + sz2
-	if sz1/n != len(s) || sz2/(n-1) != len(sep) || sz < 0 {
-		return nil, errors.New("rep causes overflow")
-	}
-	t.RequireBytes(n*len(s) + (n-1)*len(sep))
 	builder.Grow(sz)
-	builder.Write(s)
-	for {
-		n--
-		if n == 0 {
-			break
-		}
-		builder.Write(sep)
-		builder.Write(s)
+	builder.WriteString(ls)
+	for i := 1; i < n; i++ {
+		builder.WriteString(sep)
+		builder.WriteString(ls)
 	}
 	return c.PushingNext1(t.Runtime, rt.StringValue(builder.String())), nil
 }
+
+// maxRepSize is the longest string string.rep makes: MAXSIZE (INT_MAX) in the
+// reference implementation.
+const maxRepSize = math.MaxInt32
 
 func reverse(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	if err := c.Check1Arg(); err != nil {
