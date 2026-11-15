@@ -17,6 +17,44 @@ func New(ptn string) (*Pattern, error) {
 	return pb.getPattern()
 }
 
+// NewWithoutStartAnchor is like New, but a leading '^' is an ordinary character
+// rather than an anchor.  This is how string.gmatch reads its pattern: in the
+// reference implementation an anchor would prevent the iteration, so '^' at the
+// start of a gmatch pattern matches a literal '^'.
+func NewWithoutStartAnchor(ptn string) (*Pattern, error) {
+	pb := &patternBuilder{ptn: ptn, noStartAnchor: true}
+	return pb.getPattern()
+}
+
+// StartAnchored reports whether the pattern starts with the '^' anchor.
+func (p *Pattern) StartAnchored() bool {
+	return p.startAnchor
+}
+
+// MatchAt returns a slice of Capture instances for a match that starts exactly
+// at the index init, or nil if there is no such match.  The start anchor makes
+// no difference: the match is anchored at init either way.
+func (p *Pattern) MatchAt(s string, init int, budget uint64) (captures []Capture, used uint64) {
+	defer func() {
+		if r := recover(); r == budgetConsumed {
+			captures = nil
+			used = budget + 1
+		}
+	}()
+	if init < 0 || init > len(s) {
+		return nil, 0
+	}
+	matcher := patternMatcher{
+		Pattern: *p,
+		s:       s,
+		si:      init,
+		budget:  budget,
+	}
+	matcher.reset(init)
+	captures = matcher.matchToEnd()
+	return captures, budget - matcher.budget
+}
+
 // MatchFromStart returns a slice of Capture instances that match the given
 // string, starting from the `init` index.
 func (p *Pattern) MatchFromStart(s string, init int, budget uint64) (captures []Capture, used uint64) {
@@ -36,8 +74,9 @@ func (p *Pattern) MatchFromStart(s string, init int, budget uint64) (captures []
 	return captures, budget - matcher.budget
 }
 
-// Match returns a slice of Capture instances that match the given
-// string, starting from the `init` index.
+// Match returns a slice of Capture instances for the first match found at or
+// after the `init` index.  It ignores the start anchor: callers that honour it
+// use MatchFromStart or MatchAt.
 func (p *Pattern) Match(s string, init int, budget uint64) (captures []Capture, used uint64) {
 	defer func() {
 		if r := recover(); r == budgetConsumed {

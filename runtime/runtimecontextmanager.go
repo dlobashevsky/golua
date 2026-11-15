@@ -5,6 +5,7 @@ package runtime
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -206,9 +207,23 @@ func (m *runtimeContextManager) requireCPU(cpuAmount uint64) {
 	m.usedResources.Cpu = cpuUsed
 }
 
+// UnusedCPU returns the CPU left before the hard limit.  Without a CPU limit it
+// is 0 (no limit) when CPU is not counted, and untrackedCPUBudget when it is:
+// a time limit counts CPU to know when to look at the clock, so functions that
+// take a budget (the pattern matcher, ...) must still report the work they do
+// against a finite budget, or a long call under a time limit would never be
+// stopped.  It used to be 0 - used, which wrapped around to an arbitrary number.
 func (m *runtimeContextManager) UnusedCPU() uint64 {
-	return m.hardLimits.Cpu - m.usedResources.Cpu
+	if m.hardLimits.Cpu == 0 && m.trackCpu {
+		return untrackedCPUBudget
+	}
+	return unusedResource(m.hardLimits.Cpu, m.usedResources.Cpu)
 }
+
+// untrackedCPUBudget is the CPU budget when CPU is counted without a CPU limit:
+// large enough never to run out, small enough that LinearUnused's CPU factor
+// cannot overflow it.
+const untrackedCPUBudget = math.MaxInt64 >> 8
 
 func (m *runtimeContextManager) RequireMem(memAmount uint64) {
 	if m.trackMem {
@@ -272,8 +287,24 @@ func (m *runtimeContextManager) ReleaseBytes(n int) {
 	m.ReleaseMem(uint64(n))
 }
 
+// UnusedMem returns the memory left before the hard limit, or 0 if there is no
+// memory limit.
 func (m *runtimeContextManager) UnusedMem() uint64 {
-	return m.hardLimits.Memory - m.usedResources.Memory
+	return unusedResource(m.hardLimits.Memory, m.usedResources.Memory)
+}
+
+// unusedResource is what is left of limit after used, where a limit of 0 means
+// no limit (and gives 0).  A limit that is already reached leaves 1, not 0, so
+// that it is not read as "no limit": the next Require terminates the context.
+func unusedResource(limit, used uint64) uint64 {
+	switch {
+	case limit == 0:
+		return 0
+	case used >= limit:
+		return 1
+	default:
+		return limit - used
+	}
 }
 
 func (m *runtimeContextManager) updateTimeUsed() {
@@ -287,9 +318,24 @@ func (m *runtimeContextManager) updateTimeUsed() {
 // useful when calling functions whose time complexity is a linear function of
 // the size of their output.  As cpu ticks are "smaller" than memory ticks, the
 // cpuFactor arguments allows specifying an increased "weight" for cpu ticks.
+//
+// The result is 0 when neither resource is limited, and never more than
+// math.MaxInt64, so callers can convert it to int64 (e.g. for io.LimitReader).
 func (m *runtimeContextManager) LinearUnused(cpuFactor uint64) uint64 {
+	const maxBudget = math.MaxInt64
 	mem := m.UnusedMem()
-	cpu := m.UnusedCPU() * cpuFactor
+	if mem > maxBudget {
+		mem = maxBudget
+	}
+	cpu := m.UnusedCPU()
+	if cpuFactor > 1 && cpu > maxBudget/cpuFactor {
+		cpu = maxBudget
+	} else {
+		cpu *= cpuFactor
+	}
+	if cpu > maxBudget {
+		cpu = maxBudget
+	}
 	switch {
 	case cpu == 0:
 		return mem

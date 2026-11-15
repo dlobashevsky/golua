@@ -16,10 +16,11 @@ func Test_runtimeContextManager_LinearUnused(t *testing.T) {
 		cpuFactor uint64
 	}
 	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   uint64
+		name     string
+		fields   fields
+		trackCpu bool
+		args     args
+		want     uint64
 	}{
 		{
 			name: "no limits",
@@ -51,6 +52,35 @@ func Test_runtimeContextManager_LinearUnused(t *testing.T) {
 			want: 500,
 		},
 		{
+			// A time limit counts CPU without a CPU limit: the budget is large
+			// and finite (it used to wrap around: 0 - used).
+			name: "cpu counted without cpu limit",
+			fields: fields{
+				hardLimits:    RuntimeResources{Millis: 1000},
+				usedResources: RuntimeResources{Cpu: 12345},
+			},
+			trackCpu: true,
+			args:     args{cpuFactor: 10},
+			want:     untrackedCPUBudget * 10,
+		},
+		{
+			name: "cpu counted without cpu limit, mem limit",
+			fields: fields{
+				hardLimits:    RuntimeResources{Millis: 1000, Memory: 1000},
+				usedResources: RuntimeResources{Cpu: 12345, Memory: 100},
+			},
+			args: args{cpuFactor: 10},
+			want: 900,
+		},
+		{
+			name: "huge cpu limit fits in int64",
+			fields: fields{
+				hardLimits: RuntimeResources{Cpu: 1 << 62},
+			},
+			args: args{cpuFactor: 10},
+			want: 1<<63 - 1,
+		},
+		{
 			name: "mem wins",
 			fields: fields{
 				hardLimits: RuntimeResources{Memory: 1000, Cpu: 500},
@@ -64,6 +94,7 @@ func Test_runtimeContextManager_LinearUnused(t *testing.T) {
 			m := &runtimeContextManager{
 				hardLimits:    tt.fields.hardLimits,
 				usedResources: tt.fields.usedResources,
+				trackCpu:      tt.trackCpu,
 			}
 			if got := m.LinearUnused(tt.args.cpuFactor); got != tt.want {
 				t.Errorf("runtimeContextManager.LinearUnused() = %v, want %v", got, tt.want)
@@ -123,5 +154,28 @@ func Test_runtimeContextManager_TerminateContext(t *testing.T) {
 			}()
 			m.TerminateContext("error")
 		})
+	}
+}
+
+func Test_runtimeContextManager_UnusedWithoutLimit(t *testing.T) {
+	m := &runtimeContextManager{
+		hardLimits:    RuntimeResources{Millis: 1000},
+		usedResources: RuntimeResources{Cpu: 12345, Memory: 678},
+	}
+	if got := m.UnusedCPU(); got != 0 {
+		t.Errorf("UnusedCPU() = %d, want 0 (no CPU limit, CPU not counted)", got)
+	}
+	m.trackCpu = true
+	if got := m.UnusedCPU(); got != untrackedCPUBudget {
+		t.Errorf("UnusedCPU() = %d, want %d (CPU counted for the time limit)", got, uint64(untrackedCPUBudget))
+	}
+	m.trackCpu = false
+	if got := m.UnusedMem(); got != 0 {
+		t.Errorf("UnusedMem() = %d, want 0 (no memory limit)", got)
+	}
+	m.hardLimits.Cpu = 100
+	m.usedResources.Cpu = 100
+	if got := m.UnusedCPU(); got != 1 {
+		t.Errorf("UnusedCPU() at the limit = %d, want 1", got)
 	}
 }

@@ -233,8 +233,10 @@ do
     pgs("z", "z", {z=false})
     --> =z	1
 
+    -- Lua 5.4: the empty match of "b*" right after the match "b" is not a
+    -- substitution and does not count (5.3 counted it: 4).
     pgs("abc", "b*", "Z")
-    --> =ZaZcZ	4
+    --> =ZaZcZ	3
 end
 
 do
@@ -249,6 +251,7 @@ do
     print(string.match("abc", "b", math.maxinteger))
     --> =nil
 
-    print(string.gmatch("abc", "b", math.maxinteger)())
-    --> =nil
+    -- An exhausted gmatch iterator returns no values, not nil.
+    print(select("#", string.gmatch("abc", "b", math.maxinteger)()))
+    --> =0
 end

@@ -25,11 +25,12 @@ func find(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	if err == nil {
 		ptn, err = c.StringArg(1)
 	}
-	if err == nil && c.NArgs() >= 3 {
+	// A nil init is the same as no init (luaL_optinteger).
+	if err == nil && c.NArgs() >= 3 && !c.Arg(2).IsNil() {
 		init, err = c.IntArg(2)
-		if err == nil && c.NArgs() >= 4 {
-			plain = rt.Truth(c.Arg(3))
-		}
+	}
+	if err == nil && c.NArgs() >= 4 {
+		plain = rt.Truth(c.Arg(3))
 	}
 	if err != nil {
 		return nil, err
@@ -42,15 +43,19 @@ func find(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	switch {
 	case si < 0 || si > len(s):
 		t.Push1(next, rt.NilValue)
-	case plain || len(ptn) == 0:
+	case plain || !strings.ContainsAny(ptn, patternSpecials):
+		// As str_find_aux in the reference implementation: a pattern without
+		// special characters is searched for as plain text (so ")" is found,
+		// not rejected as an invalid pattern).
 		// strings.Index is linear
 		t.RequireCPU(uint64(len(s) - si))
 		i := strings.Index(s[si:], ptn)
 		if i == -1 {
 			t.Push1(next, rt.NilValue)
 		} else {
-			t.Push1(next, rt.IntValue(int64(i+1)))
-			t.Push1(next, rt.IntValue(int64(i+len(ptn))))
+			// Positions are in s, not in s[si:].
+			t.Push1(next, rt.IntValue(int64(si+i+1)))
+			t.Push1(next, rt.IntValue(int64(si+i+len(ptn))))
 		}
 	default:
 		pat, err := pattern.New(string(ptn))
@@ -71,6 +76,10 @@ func find(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	return next, nil
 }
 
+// patternSpecials are the characters that make string.find treat its pattern as
+// a pattern rather than plain text (SPECIALS in the reference lstrlib.c).
+const patternSpecials = "^$*+?.([%-"
+
 func match(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	var (
 		s, ptn string
@@ -83,7 +92,7 @@ func match(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	if err == nil {
 		ptn, err = c.StringArg(1)
 	}
-	if err == nil && c.NArgs() >= 3 {
+	if err == nil && c.NArgs() >= 3 && !c.Arg(2).IsNil() {
 		init, err = c.IntArg(2)
 	}
 	if err != nil {
@@ -97,6 +106,12 @@ func match(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	pat, ptnErr := pattern.New(string(ptn))
 	if ptnErr != nil {
 		return nil, ptnErr
+	}
+	if si > len(s) {
+		// As in the reference implementation: no match starts after the end of
+		// the string (and matching there would slice s out of range).
+		t.Push1(next, rt.NilValue)
+		return next, nil
 	}
 	captures, usedCPU := pat.MatchFromStart(string(s), si, t.UnusedCPU())
 	t.RequireCPU(usedCPU)
@@ -146,13 +161,14 @@ func gmatch(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	if err == nil {
 		ptn, err = c.StringArg(1)
 	}
-	if err == nil && c.NArgs() >= 3 {
+	if err == nil && c.NArgs() >= 3 && !c.Arg(2).IsNil() {
 		init, err = c.IntArg(2)
 	}
 	if err != nil {
 		return nil, err
 	}
-	pat, ptnErr := pattern.New(string(ptn))
+	// gmatch has no anchor: a leading '^' is an ordinary character.
+	pat, ptnErr := pattern.NewWithoutStartAnchor(string(ptn))
 	if ptnErr != nil {
 		return nil, ptnErr
 	}
@@ -160,34 +176,34 @@ func gmatch(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	if si < 0 {
 		si = 0
 	}
-	allowEmpty := true
+	if si > len(s) {
+		// Start after the end of the string: the iterator finds nothing.
+		si = len(s) + 1
+	}
+	// As gmatch_aux in the reference implementation: a match is rejected if it
+	// ends where the previous match ended (an empty match right after a match),
+	// and the search moves on by one byte.
+	lastMatch := -1
 	var iterator = func(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 		next := c.Next()
-		var (
-			captures []pattern.Capture
-			usedCPU  uint64
-		)
-		for {
-			captures, usedCPU = pat.Match(s, si, t.UnusedCPU())
+		for si <= len(s) {
+			captures, usedCPU := pat.Match(s, si, t.UnusedCPU())
 			t.RequireCPU(usedCPU)
 			if len(captures) == 0 {
+				si = len(s) + 1
 				break
 			}
 			gc := captures[0]
-			start, end := gc.Start(), gc.End()
-			if allowEmpty || start != si || end != si {
-				allowEmpty = start >= end
-				if allowEmpty {
-					si = start + 1
-				} else {
-					si = end
-				}
-				break
+			if gc.End() == lastMatch {
+				si = gc.Start() + 1
+				continue
 			}
-			si++
-			allowEmpty = true
+			si = gc.End()
+			lastMatch = si
+			pushCaptures(t.Runtime, captures, s, next)
+			return next, nil
 		}
-		pushCaptures(t.Runtime, captures, s, next)
+		// An exhausted iterator returns no values (not nil).
 		return next, nil
 	}
 	iterGof := t.NewGoFunction(iterator, "gmatchiterator", 0, false)
@@ -198,7 +214,7 @@ func gmatch(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 func gsub(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	var (
 		s, ptn string
-		n      int64 = -1
+		n      int64
 		repl   rt.Value
 	)
 	err := c.CheckNArgs(3)
@@ -208,7 +224,8 @@ func gsub(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	if err == nil {
 		ptn, err = c.StringArg(1)
 	}
-	if err == nil && c.NArgs() >= 4 {
+	n = int64(len(s)) + 1 // At most one match per position in s.
+	if err == nil && c.NArgs() >= 4 && !c.Arg(3).IsNil() {
 		n, err = c.IntArg(3)
 	}
 	if err != nil {
@@ -312,46 +329,69 @@ func gsub(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 		sj         int             // Index in s of the first byte not yet copied
 		sb         strings.Builder // Build the result string into this
 		matchCount int64
-		allowEmpty = true
+		changed    bool // A substitution changed the string (sb holds the result so far)
+		lastMatch  = -1 // End of the previous match, -1 before the first one
+		anchored   = pat.StartAnchored()
 	)
+	// The loop follows str_gsub in the reference implementation:
+	//   - at most n matches (by default one more than the length of s, i.e. no
+	//     limit); n <= 0 means no substitution;
+	//   - a match that ends where the previous match ended (an empty match right
+	//     after a match) is not a substitution and does not count;
+	//   - an anchored pattern ('^...') is tried once, at the start of s.
 	// We require memory for the string we build as we go along.  In order to
 	// save allocations in case there are no substitutions, we do not start
 	// copying the string until one substitution has actually taken place.  This
 	// is achieved by keeping the variable sj the same until bytes are written
 	// in the string builder.
-	for ; matchCount != n; matchCount++ {
-		captures, usedCPU := pat.Match(string(s), si, t.UnusedCPU())
+	for matchCount < n && si <= len(s) {
+		var (
+			captures []pattern.Capture
+			usedCPU  uint64
+		)
+		if anchored {
+			captures, usedCPU = pat.MatchAt(s, si, t.UnusedCPU())
+		} else {
+			captures, usedCPU = pat.Match(s, si, t.UnusedCPU())
+		}
 		t.RequireCPU(usedCPU)
 		if len(captures) == 0 {
 			break
 		}
 		gc := captures[0]
 		start, end := gc.Start(), gc.End()
-		if allowEmpty || start != si || end != si {
-			sub, same, err := replF(captures)
-			if err != nil {
-				return nil, err
+		if end == lastMatch {
+			// Empty match where the previous match ended: skip one byte.
+			if anchored {
+				break
 			}
-			if !same {
-				t.RequireBytes(start - sj)
-				// No need to require memory for sub as that has been done already
-				// by replF
-				_, _ = sb.WriteString(s[sj:start])
-				_, _ = sb.WriteString(sub)
-				sj = end
-			}
-		}
-		allowEmpty = start >= end
-		if allowEmpty {
 			si = start + 1
-		} else {
-			si = end
+			continue
 		}
+		matchCount++
+		sub, same, err := replF(captures)
+		if err != nil {
+			return nil, err
+		}
+		if !same {
+			t.RequireBytes(start - sj)
+			// No need to require memory for sub as that has been done already
+			// by replF
+			_, _ = sb.WriteString(s[sj:start])
+			_, _ = sb.WriteString(sub)
+			sj = end
+			changed = true
+		}
+		if anchored {
+			break
+		}
+		si, lastMatch = end, end
 	}
 	var res rt.Value
 	switch {
-	case sb.Len() == 0:
-		// We return the input string to save an allocation.
+	case !changed:
+		// We return the input string to save an allocation.  (Not sb.Len() == 0:
+		// substitutions that produce nothing leave sb empty too.)
 		res = c.Arg(0)
 	case sj < len(s):
 		t.RequireBytes(len(s) - sj)
