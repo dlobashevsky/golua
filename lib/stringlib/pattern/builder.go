@@ -14,6 +14,7 @@ type patternBuilder struct {
 	ptn                     string
 	i                       int
 	anchorLeft, anchorRight bool
+	noStartAnchor           bool // a leading '^' is an ordinary character (string.gmatch)
 }
 
 func (pb *patternBuilder) getPattern() (*Pattern, error) {
@@ -73,7 +74,7 @@ func (pb *patternBuilder) getPatternItem() error {
 	var s byteSet
 	switch b {
 	case '^':
-		if pb.i == 1 {
+		if pb.i == 1 && !pb.noStartAnchor {
 			pb.anchorLeft = true
 			return nil
 		}
