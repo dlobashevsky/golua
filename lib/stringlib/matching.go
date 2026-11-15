@@ -43,7 +43,10 @@ func find(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	switch {
 	case si < 0 || si > len(s):
 		t.Push1(next, rt.NilValue)
-	case plain || len(ptn) == 0:
+	case plain || !strings.ContainsAny(ptn, patternSpecials):
+		// As str_find_aux in the reference implementation: a pattern without
+		// special characters is searched for as plain text (so ")" is found,
+		// not rejected as an invalid pattern).
 		// strings.Index is linear
 		t.RequireCPU(uint64(len(s) - si))
 		i := strings.Index(s[si:], ptn)
@@ -72,6 +75,10 @@ func find(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	}
 	return next, nil
 }
+
+// patternSpecials are the characters that make string.find treat its pattern as
+// a pattern rather than plain text (SPECIALS in the reference lstrlib.c).
+const patternSpecials = "^$*+?.([%-"
 
 func match(t *rt.Thread, c *rt.GoCont) (rt.Cont, error) {
 	var (

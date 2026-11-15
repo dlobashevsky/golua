@@ -39,6 +39,7 @@ These are minor incompatibilities or intentional design choices that we accept.
 | GOLUA-040 | Runtime | File metatable `__name` is "file" not "FILE*" |
 | GOLUA-041 | Runtime | `load()` accepts "B" mode (no fixed buffer concept) |
 | GOLUA-043 | Runtime | `io.lines` accepts unlimited arguments |
+| GOLUA-046 | Runtime | Malformed patterns are errors even when nothing matches |
 
 ---
 
@@ -349,3 +350,17 @@ io.lines(file, table.unpack(t))
 -- Lua: error "too many arguments"
 -- Golua: silently succeeds
 ```
+
+---
+
+### GOLUA-046: Malformed patterns are errors even when nothing matches
+
+Golua compiles a pattern before matching and rejects a malformed one (an unfinished capture, an invalid capture index such as `%1` before any capture, a `)` without `(`) whatever the subject. Reference Lua reads the pattern while matching and only raises the error when matching reaches the malformed part; if the match fails before that, the call returns no match.
+
+```lua
+string.find("abc", ".(.b%a")
+-- Lua: nil (no match, the unfinished capture is never reached)
+-- Golua: error "unfinished capture"
+```
+
+A pattern without special characters (`^$*+?.([%-`) is plain text for `string.find` in both, so `string.find("a)b", ")")` is `2 2`.

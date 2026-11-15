@@ -84,3 +84,8 @@ print(string.gsub("   ", "%s", ""))
 --> =	3
 print(string.gsub("abc", "%w", {}))
 --> =abc	3
+-- find: a pattern without special characters is plain text
+print(string.find("(% x111", ")"))
+--> =nil
+print(string.find("a)b", ")"))
+--> =2	2
