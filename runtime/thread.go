@@ -289,8 +289,11 @@ func (t *Thread) end(args []Value, err error, exception interface{}) {
 	t.caller = nil
 	err = t.cleanupCloseStack(nil, 0, err) // TODO: not nil
 	t.closeErr = err
+	// Release the goroutine's stack before handing control back: the runtime
+	// context manager is shared by all threads of the runtime, and once the
+	// caller resumes it runs concurrently with the rest of this function.
+	t.ReleaseBytes(2 << 10) // The goroutine terminates once the caller resumes
 	caller.sendResumeValues(args, err, exception)
-	t.ReleaseBytes(2 << 10) // The goroutine will terminate after this
 }
 
 func (t *Thread) call(c Callable, args []Value, next Cont) error {
