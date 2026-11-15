@@ -207,13 +207,23 @@ func (m *runtimeContextManager) requireCPU(cpuAmount uint64) {
 	m.usedResources.Cpu = cpuUsed
 }
 
-// UnusedCPU returns the CPU left before the hard limit, or 0 if there is no
-// CPU limit.  CPU is also counted when only a time limit is set (to know when
-// to look at the clock); without a CPU limit that count must not turn into a
-// budget: 0 - used would wrap around to an arbitrary number.
+// UnusedCPU returns the CPU left before the hard limit.  Without a CPU limit it
+// is 0 (no limit) when CPU is not counted, and untrackedCPUBudget when it is:
+// a time limit counts CPU to know when to look at the clock, so functions that
+// take a budget (the pattern matcher, ...) must still report the work they do
+// against a finite budget, or a long call under a time limit would never be
+// stopped.  It used to be 0 - used, which wrapped around to an arbitrary number.
 func (m *runtimeContextManager) UnusedCPU() uint64 {
+	if m.hardLimits.Cpu == 0 && m.trackCpu {
+		return untrackedCPUBudget
+	}
 	return unusedResource(m.hardLimits.Cpu, m.usedResources.Cpu)
 }
+
+// untrackedCPUBudget is the CPU budget when CPU is counted without a CPU limit:
+// large enough never to run out, small enough that LinearUnused's CPU factor
+// cannot overflow it.
+const untrackedCPUBudget = math.MaxInt64 >> 8
 
 func (m *runtimeContextManager) RequireMem(memAmount uint64) {
 	if m.trackMem {

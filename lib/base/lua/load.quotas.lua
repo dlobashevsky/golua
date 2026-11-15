@@ -72,3 +72,11 @@ do
     print(runtime.callcontext({stop={millis=10000}, kill={memory=1000000}}, function() spin() return dofile("lua/big.lua.notest") end))
     --> =done	hello
 end
+
+-- A long pattern match under a time limit alone still reports its work, so the
+-- time limit stops it (the budget without a CPU limit is large, not "none").
+do
+    local s = ("a"):rep(50000000)
+    print(runtime.callcontext({kill={millis=1}}, string.find, s, "a*$"))
+    --> =killed
+end

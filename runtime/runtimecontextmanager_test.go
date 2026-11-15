@@ -16,10 +16,11 @@ func Test_runtimeContextManager_LinearUnused(t *testing.T) {
 		cpuFactor uint64
 	}
 	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		want   uint64
+		name     string
+		fields   fields
+		trackCpu bool
+		args     args
+		want     uint64
 	}{
 		{
 			name: "no limits",
@@ -51,15 +52,16 @@ func Test_runtimeContextManager_LinearUnused(t *testing.T) {
 			want: 500,
 		},
 		{
-			// A time limit counts CPU without a CPU limit: that count is not
-			// a budget (it used to wrap around: 0 - used).
+			// A time limit counts CPU without a CPU limit: the budget is large
+			// and finite (it used to wrap around: 0 - used).
 			name: "cpu counted without cpu limit",
 			fields: fields{
 				hardLimits:    RuntimeResources{Millis: 1000},
 				usedResources: RuntimeResources{Cpu: 12345},
 			},
-			args: args{cpuFactor: 10},
-			want: 0,
+			trackCpu: true,
+			args:     args{cpuFactor: 10},
+			want:     untrackedCPUBudget * 10,
 		},
 		{
 			name: "cpu counted without cpu limit, mem limit",
@@ -92,6 +94,7 @@ func Test_runtimeContextManager_LinearUnused(t *testing.T) {
 			m := &runtimeContextManager{
 				hardLimits:    tt.fields.hardLimits,
 				usedResources: tt.fields.usedResources,
+				trackCpu:      tt.trackCpu,
 			}
 			if got := m.LinearUnused(tt.args.cpuFactor); got != tt.want {
 				t.Errorf("runtimeContextManager.LinearUnused() = %v, want %v", got, tt.want)
@@ -160,8 +163,13 @@ func Test_runtimeContextManager_UnusedWithoutLimit(t *testing.T) {
 		usedResources: RuntimeResources{Cpu: 12345, Memory: 678},
 	}
 	if got := m.UnusedCPU(); got != 0 {
-		t.Errorf("UnusedCPU() = %d, want 0 (no CPU limit)", got)
+		t.Errorf("UnusedCPU() = %d, want 0 (no CPU limit, CPU not counted)", got)
 	}
+	m.trackCpu = true
+	if got := m.UnusedCPU(); got != untrackedCPUBudget {
+		t.Errorf("UnusedCPU() = %d, want %d (CPU counted for the time limit)", got, uint64(untrackedCPUBudget))
+	}
+	m.trackCpu = false
 	if got := m.UnusedMem(); got != 0 {
 		t.Errorf("UnusedMem() = %d, want 0 (no memory limit)", got)
 	}
